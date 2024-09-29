@@ -1,0 +1,26 @@
+name: surfaceroughness_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - os
+  - warnings
+  - time
+  - glob
+  - datetime
+  - ftplib
+  - tarfile
+  - tempfile
+  - shutil
+  - netcdf4
+  - tqdm
+  - numpy
+  - gdal
+  - rasterio
+  - xarray
+  - scipy
+  - pip
+  - pip:
+      - landsatxplore
+      - pwinput
+      - shapely==1.8.1
