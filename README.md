@@ -1,4 +1,4 @@
-# Filter-Corr-Surface-Roughness
+# SurfaceRoughness_Project
 Requires Python & Anaconda.
 
 Python methods to download GoLIVE and Landsat 8 data, and process to quantify a surface roughness value.
