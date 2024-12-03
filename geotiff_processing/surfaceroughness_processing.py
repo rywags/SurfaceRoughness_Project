@@ -24,7 +24,6 @@ class image_processor:
         self,
         image_date: str,
         landsat8_process: sr_d.landsat8_processor,
-        pbar: tqdm = None,
     ) -> None:
         """
         Initializes the Landsat 8 data for a specific date by unpacking and processing the Band 8 image.
@@ -42,30 +41,22 @@ class image_processor:
             band_8_data (numpy.ndarray): Array containing the data of the Band 8 image.
             meta (dict): Metadata of the Band 8 image including its data type, count, and other properties.
         """
-
         self.image_date = image_date
         self.image_date_nc = f"{image_date[:4]}_{image_date[4:]}"
         self.landsat8_process = landsat8_process
-        self.low__correlation_threshold = 0.0
-
+        self.low_correlation_threshold = 0.0
         # Cache the path to the Earth Explorer file
         self.earth_explorer_file_location = os.path.join(
             landsat8_process.earth_explorer_directory,
             landsat8_process.landsat8_images.get(image_date),
         )
-
         # Create and cache the output directory path
         self.output_directory = os.path.join(landsat8_process.directory, image_date)
         os.makedirs(self.output_directory, exist_ok=True)
 
         # Create a temporary directory and extract Band 8 image
         self.temp_directory = tempfile.mkdtemp()  # Create a temporary directory
-
         try:
-            if pbar:
-                pbar.set_description("Initializing")
-                pbar.update(1)
-
             with tarfile.open(self.earth_explorer_file_location, "r") as tar:
                 # Find and extract the Band 8 image
                 band_8_member = next(
@@ -79,12 +70,8 @@ class image_processor:
                     self.band_8_filepath = os.path.join(
                         self.temp_directory, band_8_member.name
                     )
-                    if pbar:
-                        pbar.set_description("Band 8 image extracted")
-                        pbar.update(1)
                 else:
                     raise FileNotFoundError("Band 8 file not found in the archive.")
-
             # Load Band 8 image data
             with rasterio.open(self.band_8_filepath) as src:
                 self.band_8_data = src.read(1)  # Read the first band
@@ -92,10 +79,6 @@ class image_processor:
                 self.corr_meta = self.meta.copy()
                 self.meta.update(dtype=rasterio.int16, count=1, nodata=None)
                 self.corr_meta.update(dtype=rasterio.float32, count=1, nodata=0)
-            if pbar:
-                pbar.set_description("Band 8 image loaded")
-                pbar.update(1)
-
         except (tarfile.TarError, FileNotFoundError) as error:
             raise RuntimeError(
                 f"Error unpacking or processing {self.earth_explorer_file_location}: {error}"
@@ -107,9 +90,6 @@ class image_processor:
 
         Used to remove the `self.temp_directory` used to store `self.band_8_filepath`.
 
-        Parameters:
-            pbar (tqdm, optional): A tqdm progress bar object to update during the cleanup process.
-
         Raises:
             OSError: If the temporary directory cannot be deleted (e.g., it is restricted).
         """
@@ -118,12 +98,11 @@ class image_processor:
                 # Initialize progress bar for the cleanup process
 
                 shutil.rmtree(self.temp_directory)
-
         except OSError as e:
             # Handle exceptions and update the progress bar if provided
             print(f"Error deleting temporary directory {self.temp_directory}: {e}")
 
-    def copy_original_band8(self, pbar: tqdm = None) -> None:
+    def copy_original_band8(self) -> None:
         """
         Copies the original Band 8 image to the output directory, overwriting if it already exists.
 
@@ -131,43 +110,23 @@ class image_processor:
         source location to the specified output directory. If the file already exists, it will be
         overwritten to handle potential corruption issues.
 
-        Parameters:
-            pbar (tqdm, optional): A tqdm progress bar object to update during the copy operation.
-
         Raises:
             FileNotFoundError: If the Band 8 image file is not available.
         """
         if not self.band_8_filepath:
             raise FileNotFoundError("Band 8 image file is not available.")
-
         # Define the source and destination paths
         source_path = self.band_8_filepath
         destination_path = os.path.join(
             self.output_directory, os.path.basename(source_path)
         )
-
-        # Create a progress bar for the copy operation if provided
-        if pbar:
-            pbar.set_description(f"Copying {os.path.basename(source_path)}")
-            pbar.update(1)
-
         try:
             # Copy the file, overwriting if it already exists
             shutil.copy(source_path, destination_path)
-
-            # Update progress bar if provided
-            if pbar:
-                pbar.set_description("Copy complete")
-                pbar.update(1)
-
         except Exception as e:
-            # Handle exceptions and raise an appropriate error
-            if pbar:
-                pbar.set_description("Copy failed")
-                pbar.update(1)
             raise RuntimeError(f"Error copying Band 8 image: {e}")
 
-    def create_filtered_image(self, pbar: tqdm = None) -> str:
+    def create_filtered_image(self) -> str:
         """
         Applies high and low pass filters to the Band 8 image and saves the processed image.
 
@@ -176,9 +135,6 @@ class image_processor:
         2. Absolute value of the high pass filtered image.
         3. Low pass filter with a 17x17 kernel.
 
-        Parameters:
-            pbar (tqdm, optional): A tqdm progress bar object to update after each major operation.
-
         Returns:
             output_path (str): Path to the saved filtered image.
 
@@ -186,10 +142,8 @@ class image_processor:
             FileNotFoundError: If the Band 8 file is missing.
             RuntimeError: If an error occurs during filtering or saving.
         """
-
         if not self.band_8_filepath:
             raise FileNotFoundError("Band 8 file is not available.")
-
         try:
             # Apply high pass filter with a 5x5 kernel
             low_pass_kernel_1 = np.ones((5, 5)) / 25
@@ -197,43 +151,21 @@ class image_processor:
                 self.band_8_data, low_pass_kernel_1, mode="same"
             )
             high_pass_image = self.band_8_data - low_pass_image_1
-
-            if pbar:
-                pbar.set_description("High pass filter applied")
-                pbar.update(1)
-
             # Compute the absolute value of the high pass filtered image
             absolute_value_image = np.abs(high_pass_image)
-
-            if pbar:
-                pbar.set_description("Absolute value computed")
-                pbar.update(1)
-
             # Apply low pass filter with a 17x17 kernel
             low_pass_kernel_2 = np.ones((17, 17)) / (17 * 17)
             low_pass_image_2 = fftconvolve(
                 absolute_value_image, low_pass_kernel_2, mode="same"
             )
-
-            if pbar:
-                pbar.set_description("Low pass filter applied")
-                pbar.update(1)
-
             # Define output file path
             output_path = os.path.join(
                 self.output_directory, f"filtered_image_{self.image_date}.TIF"
             )
-
             # Save the processed image
             with rasterio.open(output_path, "w", **self.meta) as dst:
                 dst.write(low_pass_image_2.astype(rasterio.int16), 1)
-
-            if pbar:
-                pbar.set_description("Filtered image saved")
-                pbar.update(1)
-
             return output_path
-
         except Exception as error:
             raise RuntimeError(f"Error during filtering and saving: {error}")
 
@@ -241,7 +173,6 @@ class image_processor:
         self,
         correlation_threshold: float = 0.0,
         time_range: int = np.iinfo(np.int16).max,
-        pbar: tqdm = None,
     ) -> str:
         """
         Creates a correlation image from GoLIVE data, applying a threshold to exclude low-correlation values.
@@ -254,7 +185,6 @@ class image_processor:
                                             are set to NaN.
             time_range (int): Maximum allowable difference in days between the target image date and the dates
                             in the GoLIVE files for inclusion in the correlation image.
-            pbar (tqdm, optional): A tqdm progress bar object to update after each major operation.
 
         Returns:
             output_path (str): File path to the saved correlation image.
@@ -268,14 +198,8 @@ class image_processor:
             golive_filenames = self.landsat8_process.golive_image_dictionary.get(
                 formatted_image_date, []
             )
-
-            if pbar:
-                pbar.set_description("Filtering filenames")
-                pbar.update(1)
-
             # Convert image date to datetime object for filtering
             datetime_image_date = datetime.strptime(formatted_image_date, "%Y_%j")
-
             # Filter filenames based on time range
             filtered_filenames = [
                 filename
@@ -294,11 +218,6 @@ class image_processor:
                     for i in [4, 6]
                 )
             ]
-
-            if pbar:
-                pbar.set_description("Processing filtered files")
-                pbar.update(1)
-
             # Initialize the correlation cube
             correlation_cube = np.zeros(
                 (
@@ -308,8 +227,6 @@ class image_processor:
                 ),
                 dtype=np.float32,
             )
-
-            # Process each filtered file
             for index, filename in enumerate(filtered_filenames):
                 # Load dataset and apply correlation threshold
                 golive_dataset = xr.load_dataset(
@@ -317,7 +234,6 @@ class image_processor:
                 )
                 corr_data = golive_dataset.corr.values
                 corr_data[corr_data < correlation_threshold] = np.nan
-
                 # Compute offsets for placing data into the cube
                 j_offset = int(
                     (
@@ -333,38 +249,30 @@ class image_processor:
                     )
                     // 300
                 )
-
                 # Update the correlation cube with the current file's data
                 correlation_cube[
                     j_offset : j_offset + corr_data.shape[0],
                     i_offset : i_offset + corr_data.shape[1],
                     index,
                 ] += corr_data
-
                 golive_dataset.close()
-
+            correlation_max_allowance = np.max(correlation_cube, axis=2) / 1.67
+            correlation_std_allowance = np.std(correlation_max_allowance) * 1.67
+            correlation_cube[
+                correlation_cube < correlation_max_allowance[..., np.newaxis]
+            ] = np.nan
+            correlation_cube[correlation_cube < correlation_std_allowance] = np.nan
             # Compute the mean correlation across all files
             correlation_raster = np.nanmean(correlation_cube, axis=2)
-            self.low__correlation_threshold = np.nanmean(correlation_raster) * 0.67
-            correlation_raster = np.nan_to_num(correlation_raster, nan=0)
-
-            if pbar:
-                pbar.set_description("Saving correlation image")
-                pbar.update(1)
-
+            self.low_correlation_threshold = np.nanmean(correlation_raster) * 0.80
+            correlation_raster = np.nan_to_num(correlation_raster)
             # Define and save the output correlation image
             output_path = os.path.join(
                 self.output_directory, f"correlation_image_{self.image_date}.TIF"
             )
             with rasterio.open(output_path, "w", **self.corr_meta) as dst:
                 dst.write(correlation_raster.astype(rasterio.float32), 1)
-
-            if pbar:
-                pbar.set_description("Correlation image saved")
-                pbar.update(1)
-
             return output_path
-
         except Exception as error:
             raise RuntimeError(f"Error creating correlation image: {error}")
 
@@ -374,7 +282,6 @@ def cross_plot_landsat_images(
     correlation_image_path: str,
     image_date: str,
     output_plot_path: str,
-    pbar: tqdm = None,
 ) -> str:
     """
     DEPRECATED:
@@ -391,7 +298,6 @@ def cross_plot_landsat_images(
         correlation_image_path (str): File path to the correlation Landsat image (e.g., a .tif file).
         image_date (str): Date associated with the images, used for naming the output plot file.
         output_plot_path (str): Directory path where the generated cross plot will be saved.
-        pbar (tqdm, optional): A tqdm progress bar object to update after each major operation.
 
     Returns:
         plot_filepath (str): Full file path where the cross plot image was saved.
@@ -411,22 +317,12 @@ def cross_plot_landsat_images(
             return src.read(1)
 
     try:
-        if pbar:
-            pbar.set_description("Loading images")
-            pbar.update(1)
-
         # Load the filtered and correlation images
         filtered_image = load_image(filtered_image_path)
         correlation_image = load_image(correlation_image_path)
-
-        if pbar:
-            pbar.set_description("Processing images")
-            pbar.update(1)
-
         # Replace zero values with NaN in both images
         filtered_image[filtered_image == 0] = np.nan
         correlation_image[correlation_image == 0] = np.nan
-
         # Create the scatter plot
         plt.figure(figsize=(10, 6))
         plt.scatter(filtered_image.flatten(), correlation_image.flatten(), alpha=0.5)
@@ -434,18 +330,11 @@ def cross_plot_landsat_images(
         plt.ylabel("Correlation Image Values")
         plt.title(f"Cross Plot for {image_date}")
         plt.grid(True)
-
         # Save the plot
         plot_filepath = os.path.join(output_plot_path, f"cross_plot_{image_date}.png")
         plt.savefig(plot_filepath)
         plt.close()
-
-        if pbar:
-            pbar.set_description("Plot saved")
-            pbar.update(1)
-
         return plot_filepath
-
     except Exception as error:
         raise RuntimeError(f"Error creating cross plot: {error}")
 
@@ -454,7 +343,6 @@ def create_masked_image(
     correlation_image_filepath: str,
     filtered_image_filepath: str,
     data_information: image_processor,
-    pbar: tqdm = None,
 ) -> str:
     """
     Generates a masked image by applying a binary mask to a filtered image, based on a correlation threshold.
@@ -464,74 +352,36 @@ def create_masked_image(
         correlation_image_filepath (str): Path to the correlation image file.
         filtered_image_filepath (str): Path to the filtered image file.
         data_information (image_processor): Contains metadata and file handling information, including
-                                            output directory and image date.
-        pbar (tqdm, optional): Progress bar object for tracking the process.
+                                            output directory and image date..
 
     Returns:
         output_path (str): File path of the saved masked image.
     """
-
     # Open the correlation and filtered images and load the data
     with rasterio.open(correlation_image_filepath) as correlation_image, rasterio.open(
         filtered_image_filepath
     ) as filtered_image:
         correlation_data = correlation_image.read(1)
         filtered_data = filtered_image.read(1)
-
-    if pbar:
-        pbar.set_description("Images Loaded")
-        pbar.update(1)
-
     # Create a binary mask based on the correlation threshold
-    binary_mask = correlation_data >= data_information.low__correlation_threshold
-
-    if pbar:
-        pbar.set_description("Build Binary Mask")
-        pbar.update(1)
-
+    binary_mask = correlation_data >= data_information.low_correlation_threshold
     # Apply the mask to the filtered data and zero out non-correlated areas
     masked_filtered_data = np.where(binary_mask, filtered_data, 0)
-
-    if pbar:
-        pbar.set_description("Filtered Image Masked")
-        pbar.update(1)
-
     # Apply median filter for noise reduction
     masked_filtered_data = median_filter(masked_filtered_data, size=8)
-
-    if pbar:
-        pbar.set_description("Applied Median Filter to Filtered Image")
-        pbar.update(1)
-
     # Dilate areas with zero values to capture cloudy regions
     dilated_zeros = binary_dilation(
         masked_filtered_data == 0, structure=np.ones((17, 17)), iterations=4
     )
-
-    if pbar:
-        pbar.set_description("Apply Binary Dilation to Filtered Image")
-        pbar.update(1)
-
     # Mask the dilated zero areas
     masked_filtered_data = np.where(dilated_zeros, 0, masked_filtered_data)
-
-    if pbar:
-        pbar.set_description("Masked Image Processed")
-        pbar.update(1)
-
     # Define the output path and save the masked image
     output_path = os.path.join(
         data_information.output_directory,
         f"masked_image_{data_information.image_date}.TIF",
     )
-
     with rasterio.open(output_path, "w", **data_information.meta) as dst:
         dst.write(masked_filtered_data.astype(rasterio.int16), 1)
-
-    if pbar:
-        pbar.set_description("Masked Image Saved")
-        pbar.update(1)
-
     return output_path
 
 
@@ -554,24 +404,26 @@ def create_average_image(
     Returns:
         output_path (str): File path of the saved average image.
     """
-
     # Convert base image date to datetime object
     base_date = datetime.strptime(data_information.image_date, "%Y%j")
-
     # Define time range boundaries
     start_date = base_date - timedelta(days=time_range)
     end_date = base_date + timedelta(days=time_range)
 
-    # Convert image dates to datetime and filter based on the time range
     def convert_date(date_str):
+        """
+        Convert image dates to datetime and filter based on the time range
+        """
         return datetime.strptime(date_str, "%Y_%j")
 
     filtered_dates = [
         date for date in image_dates if start_date <= convert_date(date) <= end_date
     ]
 
-    # Find 'masked_image' .TIF files corresponding to filtered dates
     def find_masked_image_files(base_directory: str, date_list: list) -> list:
+        """
+        Find 'masked_image' .TIF files corresponding to filtered dates
+        """
         date_set = set(date.replace("_", "") for date in date_list)
         search_pattern = os.path.join(base_directory, "**", "*masked_image*.TIF")
         return [
@@ -583,10 +435,8 @@ def create_average_image(
     masked_image_files = find_masked_image_files(
         base_directory=path_row_information.directory, date_list=filtered_dates
     )
-
     if not masked_image_files:
         raise ValueError("No masked_image .TIF files found for the given dates.")
-
     # Initialize variables for stacking
     max_height, max_width = 0, 0
     for file in masked_image_files:
@@ -594,12 +444,10 @@ def create_average_image(
             height, width = src.height, src.width
             max_height = max(max_height, height)
             max_width = max(max_width, width)
-
     # Create a 3D array for stacking, initialized with NaN
     image_stack = np.full(
         (len(masked_image_files), max_height, max_width), np.nan, dtype=np.float64
     )
-
     # Read images, apply padding, and stack them
     for i, file in enumerate(masked_image_files):
         with rasterio.open(file) as src:
@@ -607,18 +455,15 @@ def create_average_image(
             height, width = data.shape
             # Apply padding if necessary
             image_stack[i, :height, :width] = data
-
     # Compute the average using np.nanmean
     average_image = np.nanmean(image_stack, axis=0)
-
     # Define the output path
     output_path = os.path.join(
         data_information.output_directory,
         f"average_image_{data_information.image_date}.TIF",
     )
-
     # Save the average image to the output path
+    average_image = np.nan_to_num(average_image, nan=0, posinf=0, neginf=0)
     with rasterio.open(output_path, "w", **data_information.meta) as dst:
         dst.write(average_image.astype(rasterio.int16), 1)
-
     return output_path

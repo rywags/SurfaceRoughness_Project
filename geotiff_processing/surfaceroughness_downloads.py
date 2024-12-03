@@ -48,12 +48,10 @@ class landsat8_processor:
         self.landsat8_images = {}
         self.xy_boundaries = [(np.inf, -np.inf), (np.inf, -np.inf)]
         self.image_height, self.image_width, self.image_depth = 0, 0, 0
-
         # Set up directory paths
         self.directory = os.path.join(directory, self.path_row)
         self.golive_directory = os.path.join(self.directory, "golive")
         self.earth_explorer_directory = os.path.join(self.directory, "earthexplorer")
-
         # Create directories if they do not exist
         for dir_path in [
             self.directory,
@@ -76,21 +74,16 @@ class landsat8_processor:
         Returns:
             downloaded_files (list): A list of filenames for the files that were successfully downloaded during this function call.
         """
-        downloaded_files = (
-            []
-        )  # List to track the filenames of successfully downloaded files
-
+        downloaded_files = list()
         try:
             # Connect to the FTP server and navigate to the target directory
             with FTP("dtn.rc.colorado.edu") as golive_FTP:
                 golive_FTP.login(user="anonymous", passwd="")
                 golive_directory = f"/work/nsidc0710/nsidc0710_landsat8_golive_ice_velocity_v1.1/{self.path_row}"
                 golive_FTP.cwd(golive_directory)
-
                 # Retrieve and filter the list of files from the FTP server
                 all_files = golive_FTP.nlst()
                 self.golive_filenames = [f for f in all_files if f.endswith(".nc")]
-
                 # Identify files that have not yet been downloaded
                 existing_files = set(
                     glob.glob(os.path.join(self.golive_directory, "*.nc"))
@@ -100,10 +93,8 @@ class landsat8_processor:
                     for f in self.golive_filenames
                     if os.path.join(self.golive_directory, f) not in existing_files
                 ]
-
                 # Ensure the download directory exists
                 os.makedirs(self.golive_directory, exist_ok=True)
-
                 # Download the files
                 if files_to_download:
                     for file_name in tqdm(
@@ -120,10 +111,8 @@ class landsat8_processor:
                             )  # Record successful downloads
                         except Exception as download_error:
                             print(f"Error downloading {file_name}: {download_error}")
-
         except Exception as ftp_error:
             print(f"Error connecting to FTP server or processing files: {ftp_error}")
-
         finally:
             # Update the dictionary with the date information extracted from filenames
             year_dayofyear = set()
@@ -133,12 +122,10 @@ class landsat8_processor:
                     year_dayofyear.update(
                         [f"{parts[4]}_{parts[5]}", f"{parts[6]}_{parts[7]}"]
                     )
-
             self.golive_image_dictionary = {
                 date: [f for f in self.golive_filenames if date in f]
                 for date in year_dayofyear
             }
-
         return downloaded_files
 
     def earth_explorer_download(self) -> list:
@@ -161,7 +148,6 @@ class landsat8_processor:
         Returns:
             list: A list of file paths for the Landsat 8 images that were successfully downloaded.
         """
-
         # Prompt for Earth Explorer credentials and log in
         while True:
             ee_username = input("Earth Explorer Username: ")
@@ -172,13 +158,11 @@ class landsat8_processor:
                 break
             except Exception as login_error:
                 print(f"{login_error} Incorrect username or password.")
-
         # Retrieve GoLIVE filenames if not already set
         if not self.golive_filenames:
             self.golive_filenames = glob.glob(
                 os.path.join(self.golive_directory, "*.nc")
             )
-
         # Build a set of Landsat 8 identifiers from GoLIVE files
         landsat_identifiers = set()
         for nc_filename in tqdm(
@@ -208,17 +192,14 @@ class landsat8_processor:
                             landsat_identifiers.add(filename.split("_")[0])
             except Exception as netcdf4_error:
                 print(f"Error processing {nc_filename}: {netcdf4_error}")
-
         # Check for already downloaded files
         downloaded_files = os.listdir(self.earth_explorer_directory)
         existing_image_dates = {
             f"{datetime.strptime(f.split('_')[3], '%Y%m%d').year}{datetime.strptime(f.split('_')[3], '%Y%m%d').timetuple().tm_yday:03d}": f
             for f in downloaded_files
         }
-
         # Track downloaded files
-        successfully_downloaded_files = []
-
+        successfully_downloaded_files = list()
         # Download necessary Landsat 8 files
         for landsat8_data in landsat_identifiers:
             image_date = landsat8_data[9:16]
@@ -226,13 +207,11 @@ class landsat8_processor:
                 self.landsat8_images[image_date] = existing_image_dates[image_date]
                 successfully_downloaded_files.append(existing_image_dates[image_date])
                 continue
-
             for file_version in range(5):
                 LGN_version = f"LGN{file_version:02}"
                 filename = f"{landsat8_data[:-5]}{LGN_version}"
                 try:
                     print(f"Trying {filename}")
-
                     # Sometimes files partially download and assume complete download. Check filesize and retry files that are below a size threshold.
                     while True:
                         download_filepath = self.earth_explorer.download(
@@ -242,7 +221,6 @@ class landsat8_processor:
                             break
                         else:
                             os.remove(download_filepath)
-
                     print(
                         f"{time.strftime('%H:%M:%S')} {filename} Download Complete at {download_filepath}"
                     )
@@ -255,10 +233,8 @@ class landsat8_processor:
                     continue
             else:
                 print(f"{time.strftime('%H:%M:%S')} {landsat8_data} Download Failed")
-
         # Log out of the Earth Explorer session
         self.earth_explorer.logout()
-
         return successfully_downloaded_files
 
     def prepare_golive_dimensions(self) -> None:
@@ -274,11 +250,9 @@ class landsat8_processor:
             self.image_width (int): Width of the image in pixels.
             self.image_depth (int): Number of GoLIVE image files.
         """
-
         # Initialize boundaries to extreme values
         x_min, x_max = np.inf, -np.inf
         y_min, y_max = np.inf, -np.inf
-
         # Process each GoLIVE file to determine the spatial boundaries
         for filename in tqdm(
             self.golive_filenames,
@@ -289,11 +263,9 @@ class landsat8_processor:
             ) as golive_data:
                 x_bounds = (np.min(golive_data.x.values), np.max(golive_data.x.values))
                 y_bounds = (np.min(golive_data.y.values), np.max(golive_data.y.values))
-
                 # Update the global boundaries
                 x_min, x_max = min(x_min, x_bounds[0]), max(x_max, x_bounds[1])
                 y_min, y_max = min(y_min, y_bounds[0]), max(y_max, y_bounds[1])
-
         # Set the boundaries and calculate image dimensions
         self.xy_boundaries = [(x_min, x_max), (y_min, y_max)]
         self.image_height = int(((y_max - y_min) // 300) + 1)
